@@ -1,63 +1,64 @@
 const express = require('express');
 const axios = require('axios');
-const app = express();
+const { Client } = require('discord.js');
 require('dotenv').config();
 
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const REDIRECT_URI = process.env.REDIRECT_URI;
-const GUILD_ID = process.env.GUILD_ID;
+const app = express();
+const port = process.env.PORT || 3000; // Use provided port or default to 3000
 
-app.use(express.static('public'));
+const client = new Client({ intents: ["GUILDS", "GUILD_MEMBERS"] });
 
-app.get('/auth/discord', (req, res) => {
-  const authorizeUrl = `https://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=identify%20guilds.join`;
-  res.redirect(authorizeUrl);
+client.login(process.env.BOT_TOKEN);
+
+app.set('view engine', 'ejs');
+
+app.get('/', (req, res) => {
+    res.render('index');
 });
 
-app.get('/auth/discord/callback', async (req, res) => {
-  const code = req.query.code;
-  try {
-    const tokenResponse = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: 'authorization_code',
-      code: code,
-      redirect_uri: REDIRECT_URI,
-    }), {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-    });
-
-    const accessToken = tokenResponse.data.access_token;
-    const userResponse = await axios.get('https://discord.com/api/users/@me', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
-
-    const userId = userResponse.data.id;
-
-    await axios.put(
-      `https://discord.com/api/guilds/${GUILD_ID}/members/${userId}`,
-      { access_token: accessToken },
-      {
-        headers: {
-          Authorization: `Bot ${BOT_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    res.send('You have been added to the server!');
-  } catch (error) {
-    console.error(error);
-    res.send('An error occurred. Please try again.');
-  }
+app.get('/login', (req, res) => {
+    const redirect_uri = encodeURIComponent(process.env.REDIRECT_URI);
+    res.redirect(`https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${redirect_uri}&response_type=code&scope=identify%20guilds.join`);
 });
 
-app.listen(3000, () => {
-  console.log('Server is running on port 3000');
+app.get('/callback', async (req, res) => {
+    const code = req.query.code;
+    const redirect_uri = process.env.REDIRECT_URI;
+
+    try {
+        const tokenResponse = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
+            client_id: process.env.CLIENT_ID,
+            client_secret: process.env.CLIENT_SECRET,
+            grant_type: 'authorization_code',
+            code: code,
+            redirect_uri: redirect_uri
+        }), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
+
+        const { access_token } = tokenResponse.data;
+
+        const userResponse = await axios.get('https://discord.com/api/users/@me', {
+            headers: {
+                Authorization: `Bearer ${access_token}`
+            }
+        });
+
+        const user = userResponse.data;
+
+        client.guilds.fetch(process.env.GUILD_ID).then(guild => {
+            guild.members.add(user.id, { accessToken: access_token });
+        });
+
+        res.send(`Hello, ${user.username}. You have been added to the server!`);
+    } catch (error) {
+        console.error(error);
+        res.send('An error occurred');
+    }
+});
+
+app.listen(port, () => {
+    console.log(`App listening at http://localhost:${port}`);
 });
